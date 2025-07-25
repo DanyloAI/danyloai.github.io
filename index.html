@@ -143,6 +143,21 @@
             .flex-col.flex-1 {
                 width: 100%; /* Take full width on mobile */
             }
+
+            /* Make Google Sign-In button much smaller on phone screens */
+            #google-sign-in-btn {
+                padding: 0.25rem 0.5rem; /* Even smaller padding for height and width */
+                font-size: 0.65rem; /* Smaller text */
+                border-radius: 9999px; /* Keep it fully rounded */
+                min-width: unset; /* Remove minimum width constraint */
+                width: auto; /* Allow width to shrink based on content */
+                gap: 0.25rem; /* Reduce gap between icon and text */
+            }
+
+            #google-sign-in-btn img {
+                width: 14px; /* Even smaller icon */
+                height: 14px;
+            }
         }
 
         @media (min-width: 769px) { /* Desktop styles */
