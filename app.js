@@ -45,11 +45,16 @@ const hamburgerBtn = document.getElementById('hamburger-btn');
 const sidebarOverlay = document.getElementById('sidebar-overlay');
 
 // Settings Modal elements
-const settingsBtn = document.getElementById('settings-btn');
+const headerSettingsBtn = document.getElementById('header-settings-btn'); // Desktop button
+const settingsBtnMobile = document.getElementById('settings-btn-mobile'); // Mobile button inside sidebar
 const settingsModal = document.getElementById('settings-modal');
 const closeSettingsModalBtn = document.getElementById('close-settings-modal');
 const userNameForm = document.getElementById('user-name-form');
 const fullNameInput = document.getElementById('full-name-input');
+
+// Toast element
+const toastMessageDiv = document.getElementById('toast-message');
+
 
 // --- Global Variables ---
 const GOOGLE_API_KEY = "AIzaSyBGl5WwMxWj0-ts3GAExvq5AHgFRsKa9h8"; // <--- PASTE YOUR KEY HERE
@@ -57,6 +62,11 @@ let currentChatHistory = [];
 let currentUser = null;
 let currentChatId = null;
 let userProvidedName = null;
+
+// Expose currentUser globally for inline script access (for hamburger check)
+window.app = window.app || {};
+window.app.currentUser = null;
+
 
 // System prompt for the AI (dynamic based on user's name)
 const getSystemPrompt = () => {
@@ -77,11 +87,14 @@ window.addEventListener('load', () => {
         disableChatInputs(true);
         messageInput.placeholder = "Nejdriv vloz API klic...";
         authControls.classList.add('hidden');
-        settingsBtn.classList.add('hidden');
+        if (headerSettingsBtn) headerSettingsBtn.classList.add('hidden'); // Check if it exists before hiding
+        if (settingsBtnMobile) settingsBtnMobile.classList.add('hidden'); // Check if it exists before hiding
         return;
     }
     authControls.classList.remove('hidden');
-    settingsBtn.classList.remove('hidden');
+    // Ensure both buttons are visible initially if not guest (handled by CSS, but good to ensure here)
+    if (headerSettingsBtn) headerSettingsBtn.classList.remove('hidden');
+    // settingsBtnMobile visibility is managed by CSS media queries and the sidebar's open state
 
     userProvidedName = localStorage.getItem('danaiUserName');
     if (userProvidedName) {
@@ -94,6 +107,8 @@ window.addEventListener('load', () => {
 // --- Firebase Authentication Listeners ---
 
 onAuthStateChanged(auth, async (user) => {
+    window.app.currentUser = user; // Update the global currentUser
+
     if (user) {
         currentUser = user;
         console.log("User logged in:", user.email, user.photoURL);
@@ -107,12 +122,6 @@ onAuthStateChanged(auth, async (user) => {
         await loadUserNameFromFirestore(user.uid);
         if (userProvidedName) {
             fullNameInput.value = userProvidedName;
-        }
-
-        if (window.innerWidth >= 769) {
-            sidebar.classList.remove('hidden');
-        } else {
-            sidebar.classList.add('hidden');
         }
 
         disableChatInputs(false);
@@ -133,10 +142,10 @@ onAuthStateChanged(auth, async (user) => {
         userDisplayName.textContent = '';
         userDisplayName.classList.add('hidden');
 
-        sidebar.classList.add('hidden');
-        sidebarOverlay.classList.add('hidden');
-        sidebar.classList.remove('open');
-        disableChatInputs(false);
+        // Always close sidebar and hide overlay on logout
+        window.closeSidebar(); 
+
+        disableChatInputs(false); // Enable for guest chat (or re-disable if API key is missing)
 
         currentChatId = null;
         userProvidedName = localStorage.getItem('danaiUserName');
@@ -157,7 +166,7 @@ googleSignInBtn.addEventListener('click', async () => {
         } else if (error.code === 'auth/cancelled-popup-request') {
             errorMessage = 'Sign-in cancelled. Please try again.';
         }
-        appendMessage(`Google Sign-In Error: ${errorMessage}`, 'ai');
+        showToast(`Google Sign-In Error: ${errorMessage}`); // Use toast for auth errors
     }
 });
 
@@ -166,72 +175,83 @@ logoutBtn.addEventListener('click', async () => {
         await signOut(auth);
     } catch (error) {
         console.error("Logout error:", error);
-        appendMessage("There was an error logging you out. Please try again.", 'ai');
+        showToast("There was an error logging you out. Please try again."); // Use toast for logout errors
     }
 });
 
 // --- Mobile Sidebar Functionality ---
 
 hamburgerBtn.addEventListener('click', () => {
+    // Always toggle sidebar open/close
     toggleSidebar();
+
+    // If user is NOT logged in, show the toast warning
+    if (!window.app.currentUser) {
+        showToast("Prosim, prihlas se, abys mohl videt minule konverzace.");
+    }
 });
 
 sidebarOverlay.addEventListener('click', () => {
     toggleSidebar(false);
 });
 
-window.addEventListener('resize', () => {
-    if (window.innerWidth >= 769 && sidebar.classList.contains('open')) {
-        toggleSidebar(false);
-        sidebar.classList.remove('hidden');
-    } else if (window.innerWidth < 769 && currentUser) {
-        sidebar.classList.add('hidden');
-    }
-});
 
+// The window.resize listener is now handled entirely within index.html's inline script.
+// This function remains to be called by event listeners within app.js if needed.
 function toggleSidebar(open) {
     const isOpen = sidebar.classList.contains('open');
     if (typeof open === 'boolean') {
         if (open) {
-            sidebar.classList.add('open');
-            sidebar.classList.remove('hidden');
-            sidebarOverlay.classList.remove('hidden');
+            window.openSidebar(); // Use global function
         } else {
-            sidebar.classList.remove('open');
-            sidebarOverlay.classList.add('hidden');
-            setTimeout(() => {
-                if (window.innerWidth < 769) {
-                    sidebar.classList.add('hidden');
-                }
-            }, 300);
+            window.closeSidebar(); // Use global function
         }
-    } else {
+    } else { // Toggle behavior
         if (isOpen) {
-            sidebar.classList.remove('open');
-            sidebarOverlay.classList.add('hidden');
-            setTimeout(() => {
-                if (window.innerWidth < 769) {
-                    sidebar.classList.add('hidden');
-                }
-            }, 300);
+            window.closeSidebar(); // Use global function
         } else {
-            if (currentUser) {
-                sidebar.classList.add('open');
-                sidebar.classList.remove('hidden');
-                sidebarOverlay.classList.remove('hidden');
-            } else {
-                appendMessage("Prosim, prihlas se, abys mohl videt minule konverzace.", 'ai');
-            }
+            window.openSidebar(); // Use global function
         }
     }
 }
 
+/**
+ * Shows a toast/snackbar message at the bottom of the screen.
+ * @param {string} message - The message to display.
+ */
+function showToast(message) {
+    if (toastMessageDiv) {
+        toastMessageDiv.textContent = message;
+        toastMessageDiv.classList.add('show');
+        setTimeout(() => {
+            toastMessageDiv.classList.remove('show');
+        }, 3000); // Hide after 3 seconds
+    } else {
+        console.warn("Toast message element not found!");
+        // Fallback to appendMessage if toast element doesn't exist
+        appendMessage(message, 'ai');
+    }
+}
+window.app.showToast = showToast; // Expose to global scope for inline script
+
+
 // --- Settings Modal Functionality ---
 
-settingsBtn.addEventListener('click', () => {
-    settingsModal.classList.remove('hidden');
-    fullNameInput.value = userProvidedName || '';
-});
+// Listeners for both settings buttons
+if (headerSettingsBtn) { // Add a check to prevent errors if element not found (though it should be now)
+    headerSettingsBtn.addEventListener('click', () => {
+        settingsModal.classList.remove('hidden');
+        fullNameInput.value = userProvidedName || '';
+    });
+}
+
+if (settingsBtnMobile) { // Add a check
+    settingsBtnMobile.addEventListener('click', () => {
+        settingsModal.classList.remove('hidden');
+        fullNameInput.value = userProvidedName || '';
+        toggleSidebar(false); // Close sidebar when modal opens on mobile
+    });
+}
 
 closeSettingsModalBtn.addEventListener('click', () => {
     settingsModal.classList.add('hidden');
@@ -247,17 +267,17 @@ userNameForm.addEventListener('submit', async (e) => {
             await setDoc(userDocRef, { name: nameToSave }, { merge: true });
             userProvidedName = nameToSave;
             console.log("User name saved to Firestore:", nameToSave);
-            appendMessage(`Tve jmeno (${nameToSave}) bylo ulozeno!`, 'ai');
+            showToast(`Tve jmeno (${nameToSave}) bylo ulozeno!`); // Use toast
             startNewChat();
         } catch (error) {
             console.error("Error saving user name to Firestore:", error);
-            appendMessage("Chyba pri ukladani jmena. Zkus to prosim znovu.", 'ai');
+            showToast("Chyba pri ukladani jmena. Zkus to prosim znovu."); // Use toast
         }
     } else {
         localStorage.setItem('danaiUserName', nameToSave);
         userProvidedName = nameToSave;
         console.log("User name saved to LocalStorage:", nameToSave);
-        appendMessage(`Tve jmeno (${nameToSave}) bylo ulozeno lokalne!`, 'ai');
+        showToast(`Tve jmeno (${nameToSave}) bylo ulozeno lokalne!`); // Use toast
         startNewChat();
     }
     settingsModal.classList.add('hidden');
@@ -303,7 +323,7 @@ chatForm.addEventListener('submit', async (e) => {
 recipeBtn.addEventListener('click', async () => {
     const ingredients = messageInput.value.trim();
     if (!ingredients) {
-        appendMessage("Prosim, napis nejdriv nejake ingredience do pole.", 'ai');
+        showToast("Prosim, napis nejdriv nejake ingredience do pole."); // Use toast
         return;
     }
     const prompt = `Uzivatel ti dava tyto ingredience: "${ingredients}". Vytvor z toho jednoduchy recept. Odpovez jako Dan, tva postava.`;
@@ -313,7 +333,7 @@ recipeBtn.addEventListener('click', async () => {
 tripBtn.addEventListener('click', async () => {
     const location = messageInput.value.trim();
     if (!location) {
-        appendMessage("Prosim, napis nejdriv nejake mesto do pole.", 'ai');
+        showToast("Prosim, napis nejdriv nejake mesto do pole."); // Use toast
         return;
     }
     const prompt = `Uzivatel chce jet na vylet do tohoto mesta: "${location}". Vytvor jednoduchy jednodenni plan cesty. Odpovez jako Dan, tva postava.`;
@@ -348,6 +368,8 @@ async function startNewChat() {
     console.log("Started a new chat session.");
     if (currentUser) {
         await loadPastChats(currentUser.uid);
+    } else {
+        pastChatsList.innerHTML = '<p class="text-sm text-slate-500 text-center py-4">Prihlas se, abys videl minule konverzace.</p>';
     }
 }
 
@@ -358,7 +380,7 @@ async function startNewChat() {
  */
 async function loadChat(chatId) {
     if (!currentUser) {
-        appendMessage("Prosim, prihlas se, abys mohl nacist minule konverzace.", 'ai');
+        showToast("Prosim, prihlas se, abys mohl nacist minule konverzace."); // Use toast
         toggleSidebar(false);
         return;
     }
@@ -385,13 +407,13 @@ async function loadChat(chatId) {
             console.log(`Loaded chat: ${chatId}`);
         } else {
             console.warn("No such chat document!");
-            appendMessage("Omlouvam se, chat nebylo mozne nacist.", 'ai');
+            showToast("Omlouvam se, chat nebylo mozne nacist."); // Use toast
             currentChatId = null;
             startNewChat();
         }
     } catch (error) {
         console.error("Error loading chat:", error);
-        appendMessage("Neco se pokazilo pri nacitani chatu.", 'ai');
+        showToast("Neco se pokazilo pri nacitani chatu."); // Use toast
         currentChatId = null;
         startNewChat();
     } finally {
@@ -447,7 +469,7 @@ async function saveChatToFirestore(chatId, history) {
         highlightActiveChat(currentChatId);
     } catch (error) {
         console.error("Error saving chat to Firestore:", error);
-        appendMessage("Omlouvam se, chat nebylo mozne ulozit.", 'ai');
+        showToast("Omlouvam se, chat nebylo mozne ulozit."); // Use toast
     }
 }
 
@@ -612,7 +634,7 @@ async function getGeminiResponse(history) {
 function handleApiError(error) {
     console.error("Error fetching AI response:", error);
     removeTypingIndicator();
-    appendMessage("Omlouvam se, neco se pokazilo. Zkontroluj prosim API klic a pripojeni k internetu.", 'ai');
+    showToast("Omlouvam se, neco se pokazilo. Zkontroluj prosim API klic a pripojeni k internetu."); // Use toast
 }
 
 /**
@@ -700,8 +722,10 @@ function disableChatInputs(disable) {
     tripBtn.disabled = disable;
     refreshChatBtn.disabled = disable;
     newChatBtn.disabled = disable || !currentUser;
-    hamburgerBtn.disabled = (GOOGLE_API_KEY === "YOUR_API_KEY_HERE" || !GOOGLE_API_KEY);
-    settingsBtn.disabled = (GOOGLE_API_KEY === "YOUR_API_KEY_HERE" || !GOOGLE_API_KEY);
+    // Check if elements exist before trying to access their properties
+    if (hamburgerBtn) hamburgerBtn.disabled = (GOOGLE_API_KEY === "YOUR_API_KEY_HERE" || !GOOGLE_API_KEY);
+    if (settingsBtnMobile) settingsBtnMobile.disabled = (GOOGLE_API_KEY === "YOUR_API_KEY_HERE" || !GOOGLE_API_KEY);
+    if (headerSettingsBtn) headerSettingsBtn.disabled = (GOOGLE_API_KEY === "YOUR_API_KEY_HERE" || !GOOGLE_API_KEY);
 }
 
 /**
